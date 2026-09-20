@@ -1,8 +1,12 @@
 const axios = require("axios")
-const chalk = require("chalk")
 const cheerio = require("cheerio")
 const path = require("path")
-const { downloadFileWrapper, logErrorToFile } = require("./util")
+const {
+  downloadFileWrapper,
+  logErrorToFile,
+  extractAlbumFiles,
+} = require("./util")
+const { printHeader } = require("./progress")
 
 class BunkrHelper {
   constructor() {
@@ -12,28 +16,38 @@ class BunkrHelper {
     this.GlbApiSignCdnURL = "https://glb-apisign.cdn.cr/sign"
   }
 
-  async handleDownloadFiles({ url, outDir, current, total }) {
+  async handleDownloadFiles({ url, outDir, currentLink, totalLink }) {
     const { url: normalizedUrl, isAlbum } = this._normalizeBunkrUrl(url)
 
     if (isAlbum) {
       await this._handleDownloadFilesFromAlbum({
         albumUrl: normalizedUrl,
         outDir,
+        currentLink,
+        totalLink,
       })
     } else {
       await this._handleDownloadSingleFile({
         fileUrl: normalizedUrl,
         outDir,
-        current,
-        total,
+        currentLink,
+        totalLink,
       })
     }
   }
 
-  async _handleDownloadSingleFile({ fileUrl, outDir, current, total }) {
+  async _handleDownloadSingleFile({ fileUrl, outDir, currentLink, totalLink }) {
+    printHeader({ type: "file", url: fileUrl, currentLink, totalLink })
+
     const fileId = await this._getFileId(fileUrl)
 
-    await this._downloadFile({ fileId, outDir, current, total })
+    await this._downloadFile({
+      fileId,
+      outDir,
+      current: currentLink,
+      total: totalLink,
+      originalUrl: fileUrl,
+    })
   }
 
   async _getFileId(fileUrl) {
@@ -43,8 +57,21 @@ class BunkrHelper {
     return $("script[data-file-id]").attr("data-file-id")
   }
 
-  async _handleDownloadFilesFromAlbum({ albumUrl, outDir }) {
-    const { ids: fileIds } = await this._getAlbumData(albumUrl)
+  async _handleDownloadFilesFromAlbum({
+    albumUrl,
+    outDir,
+    currentLink,
+    totalLink,
+  }) {
+    const { ids: fileIds, totalSize } = await this._getAlbumData(albumUrl)
+
+    printHeader({
+      type: "album",
+      url: albumUrl,
+      meta: `${fileIds.length} files${totalSize ? `, ${totalSize}` : ""}`,
+      currentLink,
+      totalLink,
+    })
 
     let current = 0
     for (const fileId of fileIds) {
@@ -54,27 +81,31 @@ class BunkrHelper {
         outDir,
         current,
         total: fileIds.length,
-        prefixErrorLog: `Album | ${albumUrl}`,
+        albumUrl,
+        originalUrl: albumUrl,
       })
     }
   }
 
-  async _downloadFile({ fileId, outDir, current, total, prefixErrorLog }) {
-    try {
-      const { url, ext } = await this._getFileCdnData(fileId)
+  async _downloadFile({
+    fileId,
+    outDir,
+    current,
+    total,
+    albumUrl,
+    originalUrl,
+  }) {
+    const { url, ext } = await this._getFileCdnData(fileId)
 
-      await downloadFileWrapper({
-        url,
-        filename: `${fileId}${ext}`,
-        outDir,
-        current,
-        total,
-        prefixErrorLog,
-      })
-    } catch (error) {
-      await logErrorToFile(`BUNKR | ${fileId}`)
-      console.error(`❌ [${error.message}]`)
-    }
+    await downloadFileWrapper({
+      url,
+      filename: `${fileId}${ext}`,
+      outDir,
+      current,
+      total,
+      isAlbum: Boolean(albumUrl),
+      originalUrl,
+    })
   }
 
   async _getAlbumData(albumUrl) {
@@ -97,11 +128,11 @@ class BunkrHelper {
         return
       }
 
-      const match = script.match(/window\.albumFiles\s*=\s*(\[[\s\S]*?\])\s*;?/)
+      const match = extractAlbumFiles(script)
 
       if (!match || rawArrayString) return
 
-      rawArrayString = match[0]
+      rawArrayString = match
     })
 
     // Parse string sang Array

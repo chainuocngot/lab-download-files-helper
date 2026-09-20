@@ -1,5 +1,7 @@
 const axios = require("axios")
-const { downloadFileWrapper, logErrorToFile } = require("./util")
+const path = require("path")
+const { downloadFileWrapper } = require("./util")
+const { printHeader } = require("./progress")
 
 class TurboHelper {
   constructor() {
@@ -7,23 +9,20 @@ class TurboHelper {
     this.SignURL = "https://turbo.cr/api/sign"
   }
 
-  async handleDownloadFile({ url, outDir, current, total }) {
+  async handleDownloadFile({ url, outDir, currentLink, totalLink }) {
+    printHeader({ type: "file", url, currentLink, totalLink })
+
     const fileId = this._getTurboId(url)
 
-    try {
-      const { original_filename, url: cdnUrl } = await this._getFileData(fileId)
-
-      await downloadFileWrapper({
-        url: cdnUrl,
-        filename: original_filename,
-        outDir,
-        current,
-        total,
-      })
-    } catch (error) {
-      await logErrorToFile(`TURBO | ${fileId}`)
-      console.error(`❌ [${error.message}]`)
-    }
+    const { url: cdnUrl, ext } = await this._getFileData(fileId)
+    await downloadFileWrapper({
+      url: cdnUrl,
+      filename: `${fileId}${ext}`,
+      outDir,
+      current: currentLink,
+      total: totalLink,
+      originalUrl: url,
+    })
   }
 
   async _getFileData(fileId) {
@@ -33,7 +32,9 @@ class TurboHelper {
 
     const { data } = await axios.get(url.toString())
 
-    return data
+    const extFile = path.extname(data.filename || data.original_filename)
+
+    return { ...data, ext: extFile }
   }
 
   _getTurboId(url) {
